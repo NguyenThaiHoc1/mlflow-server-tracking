@@ -1,0 +1,74 @@
+version: '3.2'
+
+services:
+  minio:
+    container_name: minio
+    image: minio/minio
+    env_file:
+      - .env
+    environment:
+      MINIO_ACCESS_KEY: ${AWS_ACCESS_KEY_ID}
+      MINIO_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY}
+    ports:
+      - 9000:9000
+      - 9002:9001
+    volumes:
+      - minio_data:/data
+    command: server /data --address ':9000' --console-address ":9001"
+    restart: always
+
+  mc:
+    container_name: mc
+    image: minio/mc
+    depends_on:
+      - minio
+    env_file:
+      - .env
+    entrypoint: >
+      /bin/sh -c " 
+      /usr/bin/mc config host add myminio http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}; 
+      /usr/bin/mc mb myminio/${MINIO_S3_BUCKET}; 
+      /usr/bin/mc policy download myminio/${MINIO_S3_BUCKET}; 
+      exit 0; 
+      " 
+
+  mlops_pgdb:
+    container_name: mlops_pgdb
+    build:
+      context: ./container/postgres
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+
+  web:
+    container_name: mlflow_server
+    image: mlflow_server
+    build:
+      context: ./container/web
+      dockerfile: Dockerfile
+    depends_on:
+      - mc
+      - mlops_pgdb
+    env_file:
+      - .env
+    ports:
+      - 5000:5000
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    restart: always
+    command: mlflow server --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@mlops_pgdb:5432/${POSTGRES_DB} --default-artifact-root s3://${MINIO_S3_BUCKET}/ --host 0.0.0.0
+
+volumes:
+  postgres-db-volume:
+  src:
+  minio_data:
