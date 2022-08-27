@@ -1,0 +1,55 @@
+Basic: https://dev.to/techschoolguru/install-use-docker-postgres-table-plus-to-create-db-schema-44he
+Remove all image and container: https://typeofnan.dev/how-to-stop-all-docker-containers/
+Mot vai syntax co ban cua docker: https://topdev.vn/blog/chay-postgresql-trong-docker-container/
+
+access database with user:
+psql -U thaihoc -d world (World: la database)
+
+
+###### Basic syntax ########
+- Level 1
+  B1  : Chúng ta sẽ tạo 1 cái image về cái mà ta muốn sử dụng
+          VD: chúng ta có thể tạo 1 file Dockerfile (ở đâu đó ...)
+              sau đó build "docker build -t <name_image> <nơi_chứa_Dockerfile>"
+
+  B1.1: Chúng ta có thể check "docker images -a"
+
+  B2  : Chúng ta bắt đầu build container từ cái image trên
+          VD: "docker run -d --name <tên_của_container> -p 5432:5432 <image_name>"
+              -d: là nói với docker chạy cái container này trên background (or detech mode)
+
+  B3  : Chúng ta bắt đầu check container có đang start hay ko ?
+          VD: "docker ps -a": Check docker container đang run hay stop
+              "docker exec -it <container_name> bash"
+              Lúc này chúng ta đã ở trong container ấy
+
+  B4  : Chúng ta bắt đầu truy cập vào trực tiếp postgres thông qua câu lệnh
+          VD: "psql -U <username> -d <database>"
+          Lưu ý: username mặc định của postgres chính là "postgres" và nó có quyền truy cập vào tất cả database
+
+  B5  : Bên cạnh đó nhu cầu tạo 1 user một tên nào đó thì chúng ta có thể làm như sau
+          VD:
+             - "create database <name_database>;"
+             - "create user <username_của_bạn> with encrypted password '<password_của_bạn>';"
+             - "grant all privileges on database <username_của_bạn> to <name_database>;"
+
+  B6  : Đến lúc kết nối tới RBDSM dowloand Tablue hay PGadmin or something else
+
+
+  Oth : Một số câu lệnh cơ bản
+           VD:
+             - "\q"   : thoát ra khỏi psql
+             - "exit" : thoát ra khoải container
+             - "\l"   : list database và list user được truy cập
+             - "\du"  : list user và quyền được cấp cho nó
+
+- Level 2: Middle -- Using Docker-Compose with DockerFile
+  B1  : Chúng ta sẽ tạo 1 docker-compose.yaml
+  B2  : Cấu hình docker compose tại thư mục root (thường ta sẽ để đầu thư mực project của ta)
+        VD: Cấu hình như đã trình bày docker-compose.yaml
+        Lưu ý: dùng trực tiếp image từ docker-hub sử dụng tag 'from'
+               sử dụng Dockerfile ta dùng tag 'build'
+
+  B3  : Sau khi đã setup thành công ta dùng lệnh sau
+        VD: docker compose build <tên service> (build: được dùng để build or rebuild image)
+            docker compose up <tên service> (create: create and start container)
