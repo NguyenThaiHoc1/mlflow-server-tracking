@@ -1,6 +1,7 @@
 01-intro
 02-experiment-tracking
 data
+container/airflow/logs
 
 
 Note
