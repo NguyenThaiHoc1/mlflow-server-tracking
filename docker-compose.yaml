@@ -1,17 +1,96 @@
-version: '3.2'
+version: '3.4'
+
+x-common:
+  &airflow-common
+  build:
+    context: ./container/airflow
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+  user: "50000:0"
+  volumes:
+    - ./container/airflow/dags:/opt/airflow/dags
+    - ./container/airflow/logs:/opt/airflow/logs
+    - ./container/airflow/plugins:/opt/airflow/plugins
+  depends_on:
+    &airflow-common-depends-on
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
 
 services:
+  airflow-init:
+    <<: *airflow-common
+    environment:
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: 'airflow'
+      _AIRFLOW_WWW_USER_PASSWORD: 'airflow'
+      _PIP_ADDITIONAL_REQUIREMENTS: ''
+    container_name: airflow-init
+    user: "0:0"
+    entrypoint: /bin/bash
+    depends_on:
+      - redis
+      - postgres
+
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    ports:
+      - "8080:8080"
+    command: webserver
+    restart: always
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "http://localhost:8080/health" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      - airflow-init
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    restart: always
+    depends_on:
+      - airflow-init
+      - airflow-webserver
+
+  airflow-worker:
+    <<: *airflow-common
+    environment:
+      DUMB_INIT_SETSID: "0"
+    container_name: airflow-worker
+    command: celery worker
+    restart: always
+    depends_on:
+      - airflow-init
+      - airflow-scheduler
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 30s
+      retries: 50
+    restart: always
+
   minio:
     container_name: minio
     image: minio/minio
-    env_file:
-      - .env
     environment:
-      MINIO_ACCESS_KEY: ${AWS_ACCESS_KEY_ID}
-      MINIO_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MINIO_ACCESS_KEY: "admin"
+      MINIO_SECRET_KEY: "hocmap123"
     ports:
-      - 9000:9000
-      - 9002:9001
+      - "9000:9000"
+      - "9002:9001"
     volumes:
       - minio_data:/data
     command: server /data --address ':9000' --console-address ":9001"
@@ -22,31 +101,46 @@ services:
     image: minio/mc
     depends_on:
       - minio
-    env_file:
-      - .env
     entrypoint: >
       /bin/sh -c " 
-      /usr/bin/mc config host add myminio http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}; 
-      /usr/bin/mc mb myminio/${MINIO_S3_BUCKET}; 
-      /usr/bin/mc policy download myminio/${MINIO_S3_BUCKET}; 
+      /usr/bin/mc config host add myminio http://minio:9000 admin hocmap123; 
+      /usr/bin/mc mb myminio/mlflow; 
+      /usr/bin/mc policy download myminio/mlflow; 
       exit 0; 
-      " 
+      "
 
-  mlops_pgdb:
-    container_name: mlops_pgdb
+  postgres:
     build:
       context: ./container/postgres
       dockerfile: Dockerfile
-    env_file:
-      - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: "thaihoc"
+      POSTGRES_PASSWORD: "hocmap123"
+      POSTGRES_DB: "postgres"
     ports:
-      - 5432:5432
+      - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
+      - ./container/postgres/entrypoint:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "airflow" ]
+      interval: 5s
+      retries: 5
+
+  flower:
+    <<: *airflow-common
+    ports:
+      - "5555:5555"
+    command: celery flower
+    restart: always
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "http://localhost:5555/" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      - redis
+      - postgres
 
   web:
     container_name: mlflow_server
@@ -56,9 +150,9 @@ services:
       dockerfile: Dockerfile
     depends_on:
       - mc
-      - mlops_pgdb
+      - postgres
     env_file:
-      - .env
+      - .env_mlflow
     ports:
       - 5000:5000
     environment:
@@ -66,7 +160,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
     restart: always
-    command: mlflow server --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@mlops_pgdb:5432/${POSTGRES_DB} --default-artifact-root s3://${MINIO_S3_BUCKET}/ --host 0.0.0.0
+    command: mlflow server --backend-store-uri postgresql+psycopg2://${MLFLOW_POSTGRES_USER}:${MLFLOW_POSTGRES_PASSWORD}@postgres:5432/${MLFLOW_POSTGRES_DB} --default-artifact-root s3://${MINIO_S3_BUCKET}/ --host 0.0.0.0
 
 volumes:
   postgres-db-volume:
